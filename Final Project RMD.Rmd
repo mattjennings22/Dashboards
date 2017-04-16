@@ -1,0 +1,228 @@
+---
+title: "Recommendations to Improve Ridership of San Francisco Bike Share"
+author: "Matt Jennings"
+output: html_document
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+setwd('C:/Users/Matt/Documents/GRAD SCHOOL/BUAN 5210/Final Project')
+rm(list=ls(all=TRUE))
+library(lubridate)
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+library(xtable)
+library(reshape2)
+
+##Load data 
+trip <- read.csv("trip.csv")
+weather <- read.csv("weather.csv")
+station <- read.csv("station.csv")
+end_station <- read.csv("end_station.csv")
+
+##Merging the data into one place
+
+#Get "date" variable in weather and trip datasets into same format
+weather$date <- mdy(weather$date)
+trip$start_date <- mdy_hm(trip$start_date)
+trip$end_date <- mdy_hm(trip$end_date)
+
+trip$date <- trip$start_date
+trip$date <- as.Date(trip$date)
+
+#Get zip code variable in trip df into same format as other datasets
+trip$zip_code <- as.numeric(levels(trip$zip_code))[trip$zip_code]
+#NAs introduced and some prior coding errors of zip_code maintained 
+
+#Get the "city" variable into the trip dataset using the common variable "id" in the station dataset
+#Also adding starting and ending station elevations
+
+trip$date <- as.Date(trip$start_date)
+trip$id2 <- trip$id
+trip$id <- trip$start_station_id 
+trip$id3 <- trip$end_station_id
+trip <- left_join(trip, station, by = c ("id"))
+trip <- left_join(trip, end_station, by = c ("id3"))
+
+#Now get the "city" variable into the weather dataset using zip_code
+zip_code <- unique(weather$zip_code)
+city <- c ("San Francisco", "Redwood City", "Palo Alto", "Mountain View", "San Jose")
+index <- cbind(city, zip_code)   
+weather <- merge(weather, index, by = "zip_code")
+
+#Now merge weather and trip data based on "city" and "date" variables
+trip <- left_join(trip,weather, by = c("date", "city"))
+
+dataset <- trip
+```
+
+Imagine the perfect day for a bike ride. It's a Saturday afternoon and you have nowhere to be. It's 72 degrees and sunny, with low humidity and a light breeze at your back. Your ride is flat and gives you a good workout without being too challenging. Maybe you want to try out the new restaurant across town or meet up with some friends at the park. What better way to get there than by bicycle?
+
+Now imagine it's mid-December and it has been raining for days. The temperature has barely cracked 50 degrees for a week. The days are getting shorter and suddenly a commute home in the dark doesn't sound very appealing. And what if you get to a station and there are no bike docks available? That means adding an extra 30 minutes to a commute when all you want to do is get home and kick off your shoes.
+
+These two scenarios obviously represent the extremes, but thinking like your customer base is often key to driving change. How do we get more people into the first mindset, where biking is both the most rewarding and economical mode of transport? Some factors are out of our control (weather) but many other factors can be easily changed to better serve our customers (number of bikes available, number of stations, membership structure, etc.).
+
+If we have an understanding of when and why someone will want to use a bike instead of another means of transportation, we can implement policies that maximize the value of our service and increase overall ridership. If we aren't able to identify what factors go into the decision-making process for our customers, we will fail to adapt to their needs and they will find another way to travel. Looking at the patterns and making proactive decisions instead of reactive ones could be the difference between success and failure.
+
+This analysis will provide snapshots of Bay Area Bike Share trips between August 2013 and August 2015. We have over 600,000 trips logged, each containing a wealth of information that can provide insights into our customers. Do people ride less on rainy days? Are our stations properly equipped? What day of the week is our most popular? Have our numbers trended up in the past two years? We will explore all of these questions and end with a set of recommendations aimed at increasing the number of riders and the amount of revenue they generate.
+
+The first trend we will examine is how our ridership has changed over the two years covered in the dataset. There are two subsets of riders: subscribers, who pay a monthly fee and get to take as many trips as they like, and customers, who have not signed up long-term and pay by the ride. By far, most of our trips are made by subscribers. This is a healthy trend, because those riders are bringing in most of our revenue. We would like to grow both numbers, but gaining subscribers should be our bigger priority. How are we doing so far?
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+dataset$duration <- as.numeric(dataset$duration)
+dataset$month <- format(as.Date(dataset$date), "%Y-%m")
+
+monthly_subscription <- dataset %>%
+  select(month, subscription_type) %>%
+  group_by(month, subscription_type) %>%
+  summarize(total_trips=n())
+
+ggplot(data=monthly_subscription, aes(x=month, y=total_trips)) +
+  geom_point(aes(colour = subscription_type),size=2) +
+  geom_line(aes(colour = subscription_type, group = subscription_type)) +
+  scale_x_discrete(breaks=c("2013-08","2014-02","2014-08","2015-02","2015-08")) +
+  xlab("Month") +
+  ylab("Total Trips") +
+  ggtitle("Overall subscribers peaked in 2014; customers have flatlined")
+
+```
+
+This chart is encouraging and but still shows room for improvement and further proves that we need to expand our customer base. The number of total trips by subscribers peaked in October 2015 and our numbers have yet to get back to that level. However, there has been a sustained ridership of 25,000 per month over the last 6 months, which is equals the total number of 25,000 ride months that we saw over the first 19 months. 
+
+Additionally, we are seeing much higher fluctuation in the number of subscribers as compared to customers. We could speculate that the large drop-offs in the winter months indicate that some people are choosing to let their memberships lapse and are choosing other forms of transportation. Can we attribute this drop-off to the weather or is it something that is in our control? A quick look at the number of rainy days per month shows us that bad weather is a major factor in the decline in trips. Two of the top 3 rainiest months (February and December 2014) are also two of the bottom 4 in total rides. We can't predict when it will rain, but the knowledge that it affects the decisions of our customers is important. It also underscores the fact that our largest avenue for growth is pursuing more riders when the weather is nice. Perhaps next summer would be a good time for an advertising blitz.
+
+A second factor to consider is the distribution of our stations. Currently, our stations are distributed in five distinct regions of the Bay Area. 
+
+```{r xtable, results="asis", echo=FALSE, message=FALSE, warning=FALSE}
+station_trips <- dataset %>%
+  select(start_station_name, city, start_station_elevation) %>%
+  group_by(start_station_name, city) %>%
+  summarize(total_trips=n(), elevation=mean(start_station_elevation))
+
+station_trips$City <- station_trips$city
+
+stations_per_city <- station_trips %>%
+  select(City, start_station_name) %>%
+  group_by(City) %>%
+  summarize(Stations=n())
+
+print(xtable(stations_per_city), type="html", include.rownames=FALSE)
+```
+
+
+Downtown San Francisco accounts for a large share of stations and an even larger share of the total rides. Of the 669,959 total trip records in the dataset, about 90% originate at one of the San Francisco stations. Why is this important? Because maintaining a proper distribution of stations and docks is critical for having a successful bike share program. If there are ever not enough bikes or not enough open docks, riders will be left frustrated and their satisfaction with our service will diminish.
+
+Each station has somewhere between 11 and 27 docks available for renting or depositing a bike. Though most of the stations in San Francisco are towards the higher end of that total, we are still woefully short of the number of docks that would be optimal for riders in the downtown area. The following graph illustrates the severity of this problem.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+station_trips <- dataset %>%
+  select(start_station_name, city, dock_count) %>%
+  group_by(start_station_name, city) %>%
+  summarize(total_trips=n(), dock_count=mean(dock_count))
+
+trips_per_dock <- station_trips %>%
+  select(city, total_trips, dock_count) %>%
+  group_by(city) %>%
+  summarize(trips_per_dock=sum(total_trips)/sum(dock_count))
+
+ggplot(trips_per_dock, aes(x = reorder(city, trips_per_dock), y = trips_per_dock)) +
+      geom_bar(aes(fill=city), stat = "identity") +
+      guides(fill=FALSE) +
+      coord_flip() +
+      ylim(0,1000) +
+      ylab("Trips taken per available dock") +
+      xlab("City") +
+      ggtitle("Stations and docks are used significantly more often in San Francisco")
+
+```
+
+The trips per dock value on the x-axis is a measure of how many trips were taken for each dock available in that city. There are over 850 trips made for every dock available dock in San Francisco, while the average dock in every other city accommodates fewer than 200 trips. The vast difference in the number of trips per dock and per station indicates that docks and stations in cities other than San Francisco are generating less than a quarter of the business but still cost the same amount in maintenance costs. Our plan of action should be two-fold: relocate any station that does not bring in a reasonable amount of revenue and focus any future expansion on stations and docks in the downtown San Francisco area.
+
+The station at San Jose Government Center has seen 23 trips over the two years captured in this dataset. Those bikes and docks would be infinitely better spent in San Francisco. Similarly, 7 out of 8 stations in Redwood City saw under 500 trips over the same time period. It's time to sit down and make a decision about whether or not to pull the plug on bike share stations in that region. If we decide to keep it operational, we should seriously think about heavily investing resources to improve advertising or attract a loyal base of customers to help expand business in the area. 
+
+Speaking of loyalty, let's take a look at the most active users of our bike share system: commuters. At first glance, it wouldn't seem like we have any metrics on the number of commuters that make up our customer base. We have next to zero knowledge about who is actually getting on the bike, so we have to use the numbers available to make our own conclusions. 
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+dataset$day <- weekdays(as.Date(dataset$date))
+
+day <- dataset %>%
+  select(day, duration) %>%
+  group_by(day) %>%
+  summarize(total_trips=n(), avg_duration=mean(duration)/60)
+
+ggplot(day, aes(x=reorder(day, total_trips), y=total_trips)) +
+             geom_bar(aes(fill = day), stat = "identity") +
+             coord_flip() +
+             guides(fill = FALSE) +
+             ylab("Total Trips") +
+             xlab("Day of the Week") +
+             ggtitle("Weekday commuters make up a large share of our customer base")
+
+
+```
+
+This graph tells us everything we need to know about who is using our service.  The size of the gap between weekdays and weekends illustrates just how important commuters are to our existence. We should be doing everything we can to cater our experience to commuters, especially in the San Francisco region. This means intentionally placing stations next to transit stations, large office buildings or other places that are highly accessible for people on a Monday - Friday schedule.
+
+But what if we want to expand our base of users to more than just commuters? We should be able to cater to the commuters and also appeal to people who just want to get from point A to point B. To see what that would look like in action, we have to look no further than Palo Alto. Trips in Palo Alto have a much different profile than those in the rest of the region. The table below illustrates this point.
+
+
+```{r xtable2, results="asis", echo=FALSE, message=FALSE, warning=FALSE}
+dataset$longride <- ifelse(dataset$duration>1800,1,0)
+
+long_rides <- dataset %>%
+  select(longride) %>%
+  group_by(longride) %>%
+  summarize(total_trips=n())
+
+city_long_rides <- dataset %>%
+  select(city, longride) %>%
+  group_by(city, longride) %>%
+  summarize(total_trips=n())
+
+city_long_percent <- city_long_rides %>%
+  select(city, longride, total_trips) %>%
+  group_by(city) %>%
+  summarize(longrides=total_trips[longride==1], total_trips=sum(total_trips))
+
+city_long_percent <- city_long_percent %>%
+  select(city, longrides, total_trips) %>%
+  group_by(city) %>%
+  summarize(longride_percent=longrides/total_trips)
+
+city_subscription <- dataset %>%
+  select(city, subscription_type) %>%
+  group_by(city, subscription_type) %>%
+  summarize(total_trips=n())
+
+city_subscription_percent <- city_subscription %>%
+  select(city, subscription_type, total_trips) %>%
+  group_by(city) %>%
+  summarize(subscription_types=total_trips[subscription_type=="Customer"], total_trips=sum(total_trips))
+
+city_subscription_percent <- city_subscription_percent %>%
+  select(city, subscription_types, total_trips) %>%
+  group_by(city) %>%
+  summarize(customer_percent=subscription_types/total_trips)
+
+city_melt <- left_join(city_subscription_percent,city_long_percent, by = c("city"))
+
+city_melt$customer_percent <- city_melt$customer_percent * 100
+city_melt$longride_percent <- city_melt$longride_percent * 100
+
+colnames(city_melt)[1] <- "City"
+colnames(city_melt)[2] <- "Customer Percent "
+colnames(city_melt)[3] <- "Longride Percent "
+
+print(xtable(city_melt), type="html", include.rownames=FALSE)
+```
+
+43.5% of trips in Palo Alto are taken by people who are not subscribers. This indicates that we need more subscribers there, but also signals a different type of attitude towards the bike share program as a whole. People feel more comfortable using the bike share as they would their own bike. They see a bike share station and think, "I'd rather bike to where I'm going than walk." If we were able to bring some of that mindset to bikers in San Francisco, our trip totals would spike dramatically. There is a benefit to a dedicated subscriber base, but encouraging casual, one-off trips is also important to reinforce the fact that bike share is not just for commuters on their way to work.
+
+The percentage of long rides (defined as more than 30 minutes) is also an anomaly in Palo Alto. The benefits of this category of ride are great for the customer (they get a good workout, can travel longer distances) and for us (customers and subscribers pay an extra fee for rides lasting longer than 30 minutes). San Francisco trips are so dominated by commuters that fewer than 1 in 20 trips last over 30 minutes. Perhaps if we added San Francisco stations in scenic areas of the city, people would be more willing to travel farther and enjoy a bike ride outside the dense downtown commuter zone.
+
+So what specific actions can we take to make our bike share service more attractive? We need to acknowledge that subscribers and commuters make up the majority of our ridership, but we also need to actively court people outside of that demographic if we want to increase the number of trips from our service. We need to increase the number of riders in cities other than San Francisco or we need to pull the plug on those stations and reallocate resources to our main business in the downtown area. We know that ridership declines in the winter, so we should focus our advertising and customer outreach in the warmer months when people are more likely to want to take a bike ride. 
+
+But most of all, we need to encourage the mindset that biking is exciting, efficient, and affordable method of transportation. If people think of bike sharing and the sunny, relaxing scenario from the beginning pops into their mind, our service will be synonymous with fun and convenience. This mindset could be contagious and encourage large groups of people to rely on bike share as their go-to method of transportation. If we remain cognizant of all of the factors that influence the decision-making process of our customers, we can react accordingly and make proactive changes to ensure the long-term success of Bay Area Bike Share.
+
