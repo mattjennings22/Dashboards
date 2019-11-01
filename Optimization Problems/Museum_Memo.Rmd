@@ -1,0 +1,318 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### **To:** Board of Directors, Seattle Museum of Modern Art
+  
+#### **From:** Matt Jennings, Data Analyst 
+  
+#### **Date:** `r format(Sys.time(), '%B %d, %Y')`   
+  
+#### **RE:** Proposals for a new exhibit
+
+***
+
+**Introduction**
+
+```{r, include=FALSE}
+# Set up
+
+# Clear environment
+rm(list = ls(all = TRUE)) 
+# Load packages
+library(lpSolveAPI)
+library(igraph)
+library(tidyverse)
+library(plyr)
+library(knitr)
+
+# read in data
+art <- as.matrix(read.csv('5260_S18_Arties_Dream.csv'))
+
+```
+
+```{r, include=FALSE}
+
+# define binary vectors of different art types to use for constraints
+
+# type
+collage <- as.numeric(grepl("collage",art[,4]))
+wire <- as.numeric(grepl("wire",art[,4]))
+computer <- as.numeric(grepl("computer-generated",art[,4]))
+photo <- as.numeric(grepl("photo-realistic",art[,4]))
+cubist <- as.numeric(grepl("cubist",art[,4]))
+expressionist <- as.numeric(grepl("expressionist",art[,4]))
+watercolor <- as.numeric(grepl("water",art[,4]))
+oil <- as.numeric(grepl("oil",art[,4]))
+painting <- as.numeric(grepl("painting",art[,4]))
+sculpture <- as.numeric(grepl("sculpture",art[,4]))
+
+not_painting <- as.numeric(!grepl("painting",art[,4]))
+not_sculpture <- as.numeric(!grepl("sculpture",art[,4]))
+
+# artist
+artie <- as.numeric(grepl("Artie",art[,2]))
+helen <- as.numeric(grepl("Helen",art[,2]))
+david <- as.numeric(grepl("David",art[,2]))
+ziggy <- as.numeric(grepl("Ziggy",art[,2]))
+rick <- as.numeric(grepl("Rick",art[,2]))
+bear <- as.numeric(grepl("Bear",art[,2]))
+
+# gender
+female <- as.numeric(grepl("F",art[,5]))
+male <- as.numeric(grepl("M",art[,5]))
+
+# themes
+environmentalism <- as.numeric(grepl("Aging Earth|Wasted Resources",art[,3]))
+science <- as.numeric(grepl("Beyond|Who Has Control|Where are we now?|Pioneers",art[,3]))
+narcissism <- as.numeric(grepl("Narcissism",art[,3]))
+reflection <- as.numeric(grepl("Reflection",art[,3]))
+
+```
+
+
+A local artist named Artie Fophartie has recently come into a large sum of money and has agreed to fund a new exhibit at the Seattle Museum of Modern Art. He will be funding the entire exhibit himself and has an interest in showcasing up-and-coming modern artists. Artie has been working with Celeste McKenzie, the museum director, to source pieces for the exhibit. This duo has put together a list of 34 pieces from 13 different artists that are available for purchase.
+
+Artie and Celeste each have a vision for the exhibit and have been collaborating on creating a shared set of requirements for the final set of pieces. Artie would like there to be a strong Pacific Northwest theme with a diverse set of art mediums; Celeste has prioritized the inclusion of pieces from underrepresented groups like female and Native American artists. Together, they have agreed on the basic structure of the exhibit and have put together three distinct proposals for selecting and purchasing the pieces. Each proposal is outlined and analyzed below.
+
+
+**Proposal 1 - Limited Budget**
+
+
+The first proposal recognizes the fact that Artie is funding the exhibit on his own and has a limited budget for purchasing pieces. Artie has set a limit of $4 million for acquiring, transporting, installing, insuring, and returning all of the pieces for the exhibit. The goal is to determine the maximum number of pieces that can be included given the restrictions that Artie and Celeste have put in place. A binary integer programming model has produced the optimal solution to this proposal, which leads to a total of 15 pieces for the exhibit. The following table lists the artist, title, description, and cost of each piece that would be included in this scenario.
+
+
+```{r, include=FALSE}
+
+# Proposal 1 (art piece maximization)
+
+# price
+price <- as.numeric(art[,6]) * 1000
+
+# formulate model (34 x variables, 1 y variable)
+p1 <- make.lp(0, nrow(art)+1)
+invisible(capture.output(lp.control(p1, sense = "max")))
+
+# create objective funtion of 1's vector where each piece is counted towards the total except either/or variable
+obj_fn <- c(rep(1, nrow(art)),0)
+set.objfn(p1, obj_fn)
+
+# create M value for either/or choice
+M <- 1000
+
+# create a function to add all of the general constraints that will be used in all 3 proposals
+# add a 0 to the end of each vector to account for either/or variable
+add_general_constraints <- function(model){
+  # Artie constraints
+  # type
+  add.constraint(model, c(collage,0), "=", 1)
+  add.constraint(model, c(photo,0), ">=", 1)
+  add.constraint(model, c(cubist,0), ">=", 1)
+  add.constraint(model, c(expressionist,0), ">=", 1)
+  add.constraint(model, c(watercolor,0), ">=", 1)
+  add.constraint(model, c(oil,0), ">=", 1)
+  
+  # type contingencies
+  # need either/or choice for wire mesh/computer drawn constraints
+  add.constraint(model, c((-computer + wire),-M), "<=", 0)
+  add.constraint(model, c((computer - wire),M), "<=", 0 + M)
+  add.constraint(model, c((-2*not_painting + painting),0), "<=", 0)
+  
+  # artist
+  add.constraint(model, c(artie,0), "=", sum(artie))
+  add.constraint(model, c(helen,0), "=", sum(helen))
+  add.constraint(model, c(david,0), ">=", 1)
+  add.constraint(model, c(ziggy,0), ">=", 1)
+  add.constraint(model, c(rick,0), "<=", 1)
+  
+  # artist contingencies
+  add.constraint(model, c((david - ziggy),0), "=", 0)
+  
+  # Celeste constraints
+  # female
+  add.constraint(model, c((-2*female + male),0), "<=", 0)
+  
+  # environmentalism
+  add.constraint(model, c(environmentalism,0), ">=", 1)
+  
+  # Native American
+  add.constraint(model, c(bear,0), ">=", 1)
+  
+  # science
+  add.constraint(model, c(science,0), ">=", 1)
+  
+  # types
+  add.constraint(model, c(sculpture,0), "<=", 4)
+  add.constraint(model, c(not_sculpture,0), "<=", 20)
+  
+  # piece contingency
+  add.constraint(model, c((-reflection + narcissism),0), "<=", 0)
+
+}
+
+add_general_constraints(p1)
+
+# price constraint
+budget <- 4000000
+add.constraint(p1, c(price,0), "<=", budget)
+
+# set type of variable (all binary)
+for(i in 1:nrow(art)+1) {
+  set.type(p1, i, "binary")
+}
+
+p1
+
+# Solve the model
+solve(p1)
+get.objective(p1) 
+get.variables(p1) 
+get.constraints(p1) 
+
+# creating table for display
+prop1_tab <- as.data.frame(art)
+prop1_tab <- prop1_tab[which(get.variables(p1)==1), c(2,3,4,6)]
+colnames(prop1_tab)[4] <- "Price ($000)"
+rownames(prop1_tab) <- NULL
+prop1_tab
+
+```
+
+```{r, echo=FALSE}
+kable(prop1_tab)
+
+```
+
+
+The total cost comes in at 3.95 million dollars, just under budget. The final list includes a variety of different mediums and styles, ranging from wire mesh sculptures to cubist paintings. It also features five pieces from female artists and one from Native American artist Bear Canton. This proposal would provide an impressive collection of art for a (relatively) reasonable price.
+
+
+**Proposal 2 - Larger Collection**
+
+
+The second proposal (designed by Celeste) emphasizes the need for a bold, impressive debut for the exhibit. She hopes that by increasing the number of pieces included, the museum will be able to draw large crowds that will help cover the extra costs spent on the art. But this proposal still recognizes cost as an important factor, so it seeks to minimize the cost of having at least 20 pieces on display at the exhibit. The same restrictions from the first proposal are still in play, but there is no hard cap on the spending budget. A second model has concluded that a total of 20 pieces can be achieved at a price of 5.45 million dollars. A table showing the pieces included in this proposal is shown below.
+
+
+```{r, include=FALSE}
+
+# Proposal 2 (cost minimization)
+
+# formulate model
+p2 <- make.lp(0, nrow(art)+1)
+
+# because this is a cost minimization, price is now the objective function
+obj_fn <- c(price,0)
+set.objfn(p2, obj_fn)
+
+#add general constraints
+add_general_constraints(p2)
+
+# total pieces constraint
+min_pieces <- 20
+add.constraint(p2, c(rep(1,nrow(art)),0), ">=", min_pieces)
+
+# set type of variable (all binary)
+for(i in 1:nrow(art)+1) {
+  set.type(p2, i, "binary")
+}
+
+p2
+
+# Solve the model
+solve(p2)
+get.objective(p2) 
+round(get.variables(p2),0) 
+get.constraints(p2) 
+
+# creating table for display
+prop2_tab <- as.data.frame(art, stringsAsFactors = FALSE)
+prop2_tab <- prop2_tab[which(get.variables(p2)[1:nrow(art)]!=0), c(2,3,4,6)]
+# adding totals column
+prop2_tab <- rbind(prop2_tab, c("","","Total cost", get.objective(p2)))
+colnames(prop2_tab)[4] <- "Price ($000)"
+rownames(prop2_tab) <- NULL
+prop2_tab
+
+```
+
+```{r, echo=FALSE}
+kable(prop2_tab)
+```
+
+
+Many of the same pieces are included in this scenario, but the five extra pieces help to add even more diversity to the list. Two of the additional pieces are from female artists and two others are wire mesh sculptures which should be big draws. The extra 1.5 million dollars spent under this proposal is certainly significant, but if the extra pieces can draw in a few thousand more visitors, the cost will likely be balanced out by the extra ticket and concession sales.
+
+
+**Proposal 3 - Cost Uncertainty**
+
+
+```{r, include=FALSE}
+
+# Proposal 3 (cost minimization with random price variables)
+set.seed(1234)
+
+# number of simulations
+n <- 1000
+
+# Vector to hold simulation results
+results <- vector()
+
+for(i in 1:n){
+  # creating random price vector
+  price <- runif(nrow(art), as.numeric(art[,6])*1000*0.8, as.numeric(art[,6])*1000*1.2)
+  
+  # formulate model
+  p3 <- make.lp(0, nrow(art)+1)
+  
+  obj_fn <- c(price,0)
+  set.objfn(p3, obj_fn)
+  
+  #add general constraints
+  add_general_constraints(p3)
+  
+  # total pieces constraint
+  add.constraint(p3, c(rep(1,nrow(art)),0), ">=", 20)
+  
+  # set type of variable (all binary)
+  for(i in 1:nrow(art)+1) {
+    set.type(p3, i, "binary")
+  }
+  
+  p3
+  
+  # Solve the model
+  solve(p3)
+
+  # Output
+  results <- rbind(results, get.objective(p3))
+}
+
+results_tab <- round(rbind(apply(results, 2, mean), apply(results, 2, sd)), 2)
+rownames(results_tab) <- c("mean", "sd")
+colnames(results_tab) <- c("Total Cost")
+results_tab
+
+#not showing results table because it is weirdly stretched to match the others
+
+min(results)
+max(results)
+
+```
+
+The third proposal is essentially an extension of proposal two that factors in the realities of fluctuating costs. Artie and Celeste have determined that each potential piece on their list could have a price of up to 20 percent higher or lower than the listed price. These differences obviously have a huge effect on the final cost of creating the exhibit, so it is important to make these calculations as realistic as possible.
+
+A simulation of 1000 trials using randomly generated prices (within +/- 20 percent) shows that the expected cost to fund the exhibit has dropped by about 50,000 dollars to a total of 5.4 million dollars. This is likely due to a slight price drop for one piece having cascading effects on the overall list of purchased pieces. However, the results of the simulation are highly volatile. Out of the 1000 simulations, the minimum spent to fulfill the parameters of proposal two was 4.87 million dollars while the maximum was 5.91 million dollars. 
+
+
+**Conclusion**
+
+
+These results indicate that proposal one is likely to be the more conservative choice because of the hard cap on spending and a more predictable stream of visitors. Proposal two is a high-risk, high-reward option that has a wider range of outcomes due to increased price changes (more pieces included) and the increased potential for large crowds.
+
+
+

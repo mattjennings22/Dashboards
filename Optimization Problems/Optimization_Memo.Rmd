@@ -1,0 +1,461 @@
+---
+title: "To: Gail McGovern, CEO, American Red Cross and International Federation of Red Cross"
+author: "From: Matt Jennings, Data Analyst, Seattle University"
+date: "Date: May 1, 2018"
+output: 
+  word_document: 
+    reference_docx: memo_template.docx
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#### RE: Aid to Africa Case Scenarios
+
+***
+
+**Executive Summary**
+```{r, include=FALSE}
+#Set up
+
+# Clear environment
+rm(list = ls(all = TRUE)) 
+# Load packages
+library(lpSolveAPI)
+library(igraph)
+library(tidyverse)
+library(plyr)
+library(knitr)
+
+#read in data
+#setwd('C:/Users/Matt/Documents/GRAD SCHOOL/BUAN 5260/Midterm Project')
+africa <- as.matrix(read.csv('5260_S18_Aiding_Africa_Data.csv'))
+
+#recreate tables from csv file
+
+table1 <- africa[2:4,1:3]
+colnames(table1) <- africa[1,1:3]
+
+table2 <- africa[2:4,5:6]
+colnames(table2) <- africa[1,5:6]
+
+table3 <- africa[2:31,8:12]
+colnames(table3) <- africa[1,8:12]
+#join speed/capacity to table 3 for easier data manipulation
+table3 <- as.matrix(join(as.data.frame(table3),as.data.frame(table1), by="Type"))
+
+table4 <- africa[2:10,14:15]
+colnames(table4) <- africa[1,14:15]
+
+table5 <- africa[2:16,17:19]
+colnames(table5) <- africa[1,17:19]
+
+table6 <- africa[2:7,21:23]
+colnames(table6) <- africa[1,21:23]
+
+```
+
+
+The International Federation of Red Cross (IFRC) has recently decided to create proactive plans for dispersing aid and workers to areas of Africa that are most prone to adverse conditions. There are three plans that were built to handle different scenarios that may arise. It is easy to imagine that a plan for a small-scale natural disaster will be different than one for a full-scale government collapse. The IFRC has been in contact with officials from nine countries across Africa that are likely to need aid in in a worst-case scenario and have researched the feasibility of sending cargo from the United States to these areas. For each of those nine countries, a city with a port or an airfield has been identified as a main hub to coordinate the dispersal of IFRC cargo. Each cargo load will board a ship or plane in New York or Jacksonville and travel to one of six easily accessible cities in Africa. From there, the cargo will be flown or driven deeper into Africa to reach three additional cities. This network contains 30 possible routes to transport the cargo. A network map is below.
+
+
+```{r, include=FALSE}
+#Question 1 Code
+
+#grabbing city names
+cities <- as.character(c(table3[1,1],table3[7,1],table3[13:18,1],table3[13,2],table3[19,2],table3[25,2]))
+
+#vector of total travel time based on distance and speed of transport
+route_times <- as.numeric(table3[,4])/as.numeric(table3[,7])
+
+#manually creating to/from matrix
+from_matrix <- mapvalues(table3[,1], from=cities[1:8], to=c(1:8))
+to_matrix <- mapvalues(table3[,2], from=cities[3:11], to=c(3:11))
+prob1_matrix <- cbind(from_matrix, to_matrix, route_times)
+
+#pasting into string for igraph-friendly matrix
+prob1_string <- c()
+
+for(i in 1:30) {
+  prob1_string <- paste0(prob1_string,from_matrix[i],",",to_matrix[i],",",route_times[i],",")
+}
+
+#removing extra comma
+prob1_string <- substr(prob1_string,1,nchar(prob1_string)-1)
+
+#converting string to vector
+prob1_vector <- as.numeric(unlist(strsplit(prob1_string,",")))
+
+prob1 <- matrix(nc = 3, byrow = TRUE, prob1_vector)
+
+
+# Make graph by setting 11 nodes/vertices, edges from nodes/vertices and distances from data matrix
+g <- make_empty_graph(n = 11, directed = TRUE) %>% 
+  add_edges(t(prob1[, 1:2]), weight=prob1[,3]) %>%
+  set_vertex_attr("name", value = cities)
+
+
+# Set coordinates for proper layout
+g$layout <- matrix(c(0, 0  ,50,50, 50, 50, 50,  50,100,100,100,
+                     0,300, 50,125,200,275,350,425,0,  150, 300), nc = 2)
+```
+
+```{r, echo=FALSE}
+# Network graph
+plot(g, vertex.size=15, asp=0, edge.arrow.size=0.5)
+```
+
+
+Each of the three scenarios uses this network map along with data collected from the African governments, including the amount of aid required and transportation limitations in their cities. We used this data to formulate linear programming models and solve the questions that our three scenarios pose. The first case assumes that aid is needed immediately and that there will be no consideration given to the cost of transporting supplies. The second cast recognizes the financial limitations that the IFRC faces and aims to deliver 1,000,000 tons of aid to the African cities at a minimum cost. The final case assumes more limitations on our transport routes and aims to maximize the total amount of cargo that can reach our nine chosen cities. Each case will be examined in detail below.
+
+
+**Case 1 - Cost is no object**
+
+The goal of the first scenario is to have supplies arrive to each African city as quickly as possible. For the most extreme disasters, every hour that we can save on transportation time will save lives. We have calculated the shortest route to each city by using the distance to each city and the speed of the transportation. In total, the dispersal of aid will take a combined 592.46 hours of transportation. However, we can assume that these trips will all be starting at the same time so the limiting factor will be the route that takes the longest (New York to Luanda, Angola in this scenario). A final table showing the fastest route to each city is shown below.
+
+
+```{r, include=FALSE}
+#Question 2, solve using lpsolveAPI
+
+#create route names
+from_split <- as.character(lapply(strsplit(table3[,1],","), `[[`, 1))
+to_split <- as.character(lapply(strsplit(table3[,2],","), `[[`, 1))
+route_names <- paste0(from_split,"-",to_split)
+
+# Set up the shortest path 
+sp <- make.lp(0, 30)
+
+# Set objective fn and constraints in order presented in table 3
+obj_fn <- route_times
+set.objfn(sp, obj_fn)
+
+#creating vectors of network flows to use for constraints (rows of 1's and 0's)
+flow_vectors <- data.frame()
+
+for(city in cities) {
+  if(city == cities[1] | city == cities[2])
+    flow_vectors <- rbind(flow_vectors, as.numeric(ifelse(table3[,1] == city, 1,0)))
+  if(city == cities[3] | city == cities[4] | city == cities[5] | city == cities[6] | city == cities[7] | city == cities[8])
+    flow_vectors <- rbind(flow_vectors, as.numeric(ifelse(table3[,1] == city, 1,ifelse(table3[,2] == city,-1,0))))
+  if(city == cities[9] | city == cities[10] | city == cities[11])
+    flow_vectors <- rbind(flow_vectors, as.numeric(ifelse(table3[,2] == city, -1,0)))
+}
+
+#setting rhs values
+sp_rhs <- c(9,9,rep(-1,9))
+sp_sign <- c("<=","<=",rep("=",9))
+
+#loop through cities
+for(i in 1:nrow(flow_vectors)) {
+  add.constraint(sp, flow_vectors[i,], sp_sign[i], sp_rhs[i])
+}
+
+dimnames(sp) <- list(cities, route_names)
+
+#make sure problem is coded correctly
+#write.lp(p2, "Problem2.lp",type = 'lp')
+
+# Solve Model
+solve(sp)
+
+# Get objective value
+ps <- get.primal.solution(sp)
+ov <- paste0("Objective Value = ", round(ps[1],2))
+ov
+
+### Function for making solution/sensitivity analysis table
+
+create_sa_tab <- function(model) {
+  ps <- get.primal.solution(model)
+
+  # Get sensitivity analysis
+  obj_sa <- get.sensitivity.obj(model)
+  rhs_sa <- get.sensitivity.rhs(model)
+  
+  n <- length(get.variables(model))
+  m <- length(get.constr.type(model))
+
+  
+  sa_tab <- rbind(round(c(ps[2:(n + m + 1)]),0), 
+                  round(c(rhs_sa$duals[1:m], obj_fn), 2),
+                  round(c(rhs_sa$dualsfrom[1:m],obj_sa$objfrom), 2),
+                  round(c(rhs_sa$dualstill[1:m],obj_sa$objtill), 2)) 
+  colnames(sa_tab) <- c(rownames(model), colnames(model))
+  rownames(sa_tab) <- c("solution", "duals/coef", "Sens From", "Sens Till")      
+  
+  sa_tab <- ifelse(sa_tab == -1.000e+30, "-inf", sa_tab)
+  sa_tab <- ifelse(sa_tab == 1.000e+30, "inf", sa_tab)
+  
+  # Objective value and sensitivity analysis table
+  return(sa_tab)
+  
+}
+
+sp_solution <- create_sa_tab(sp)
+sp_solution
+
+``` 
+
+```{r, include=FALSE}
+#Question 2, solve using igraph
+
+# Show shortest distance path and distance for each of the 9 African cities
+
+for(i in 3:11) {
+  route_comparison <- distances(g, c(cities[1],cities[2]), cities[i], mode="out")
+  if(route_comparison[1] < route_comparison[2])shortest_path <- all_shortest_paths(g, cities[1], cities[i], mode="out")$res[[1]]
+  if(route_comparison[1] > route_comparison[2])shortest_path <- all_shortest_paths(g, cities[2], cities[i], mode="out")$res[[1]]
+  print(shortest_path)
+  if(route_comparison[1] < route_comparison[2])print(route_comparison[1])
+  if(route_comparison[1] > route_comparison[2])print(route_comparison[2])
+}
+
+
+#creating table of values to display
+route_table_direct <- c()
+
+for(i in 3:8) {
+  route_comparison <- distances(g, c(cities[1],cities[2]), cities[i], mode="out")
+  if(route_comparison[1] < route_comparison[2])shortest_path <- all_shortest_paths(g, cities[1], cities[i], mode="out")$res[[1]]
+  if(route_comparison[1] > route_comparison[2])shortest_path <- all_shortest_paths(g, cities[2], cities[i], mode="out")$res[[1]]
+  if(route_comparison[1] < route_comparison[2])time <- round(as.numeric(route_comparison[1]),2)
+  if(route_comparison[1] > route_comparison[2])time <- round(as.numeric(route_comparison[2]),2)
+  route_row <- cbind(t(as.numeric(shortest_path)),time)
+  route_table_direct <-rbind(route_table_direct,route_row)
+}
+#adding city names back in
+route_table_direct <- replace(route_table_direct,c(1:12),cities[route_table_direct[1:12]])
+colnames(route_table_direct) <- c("Supply","Stop 1","Time")
+
+#need to do the groups of cities separately because they have different numbers of columns
+route_table_indirect <- c()
+
+for(i in 9:11) {
+  route_comparison <- distances(g, c(cities[1],cities[2]), cities[i], mode="out")
+  if(route_comparison[1] < route_comparison[2])shortest_path <- all_shortest_paths(g, cities[1], cities[i], mode="out")$res[[1]]
+  if(route_comparison[1] > route_comparison[2])shortest_path <- all_shortest_paths(g, cities[2], cities[i], mode="out")$res[[1]]
+  if(route_comparison[1] < route_comparison[2])time <- round(as.numeric(route_comparison[1]),2)
+  if(route_comparison[1] > route_comparison[2])time <- round(as.numeric(route_comparison[2]),2)
+  route_row <- cbind(t(as.numeric(shortest_path)),time)
+  route_table_indirect <-rbind(route_table_indirect,route_row)
+}
+#adding city names back in
+route_table_indirect <- replace(route_table_indirect,c(1:9),cities[route_table_indirect[1:9]])
+colnames(route_table_indirect) <- c("Supply","Stop 1","Stop 2","Time")
+
+#combining two tables
+route_table <- rbind.fill.matrix(route_table_direct,route_table_indirect)
+
+#reordering columns for better visual
+route_table[,c(3,4)] <- route_table[,c(4,3)]
+colnames(route_table) <- c("Supply","Stop 1","Stop 2","Time (hours)")
+route_table <- as.table(route_table)
+rownames(route_table) <- NULL
+
+```
+
+```{r, echo=FALSE}
+# Network table with times
+kable(route_table)
+```
+
+
+One aspect of this table sticks out immediately: aid takes much longer to reach the 3 cities that do not have access to an airfield (Libreville, Luanda and Dakar). Aid to these cities will come by ship, which can hold more cargo but is multiple days slower. In order to truly minimize the amount of time it would take to disperse aid in these countries, the IFRC should consider picking strategic cities that have access to an airfield.
+
+The second important detail to note is that all three of the cities that require a refueling stop take the same path from New York to Khartoum. If there is a major disaster that requires massive amounts of cargo to be transported to all three of these cities, it is likely that there will be a bottleneck in redirecting these supplies from Khartoum to the three other cities. There are only so many workers available at this airfield and it is likely that some of the shipments would have to be delayed. However, our calculations indicate that if this bottleneck were to occur, these are alternate paths to these three cities that could ease the burden on Khartoum's airfield and result in only a slight delay in aid arrival (for example, the route from Jacksonville to Lusaka to Kosongo would take 21.725 hours, less than an hour more than the fastest route).
+
+
+**Case 2 - Minimize total costs**
+
+
+The second scenario factors in the extreme cost of transporting all of these supplies halfway across the world. The IFRC can only manage so many trips with the limited resources that we have, so we have to allocate money wisely in order to ensure that we are only spending as much as we need to. In this scenario, New York and Jacksonville each start with 500,000 tons of cargo that needs to be dispersed across Africa according to the requirements estimated by each country. Each plane, ship, and truck route has an associated cost estimated by the President of the Board of Governors for the IFRC, Tadateru Konoe. He has been instrumental in providing the data that is needed to run these simulations and we are confident that these estimates will closely reflect reality. A table of each route used in the cost minimization network can be found below.
+
+
+```{r, include=FALSE}
+#Question 3
+
+#create a vector of aid requirements for each city
+req <- as.numeric(table4[,2])
+
+# Set up model
+mcf <- make.lp(0, 30)
+
+# Set objective fn
+route_cost <- as.numeric(table3[,5])
+obj_fn <- route_cost
+set.objfn(mcf, obj_fn)
+
+#create table of capacity vectors to avoid copy/paste
+capacity_vectors <- data.frame()
+
+for(city in cities) {
+  if(city == cities[1] | city == cities[2])
+    capacity_vectors <- rbind(capacity_vectors, as.numeric(ifelse(table3[,1] == city, table3[,6],0)))
+  if(city == cities[3] | city == cities[4] | city == cities[5] | city == cities[6] | city == cities[7] | city == cities[8])
+    capacity_vectors <- rbind(capacity_vectors, as.numeric(ifelse(table3[,1] == city, table3[,6],ifelse(table3[,2] == city,-as.numeric(table3[,6]),0))))
+  if(city == cities[9] | city == cities[10] | city == cities[11])
+    capacity_vectors <- rbind(capacity_vectors, as.numeric(ifelse(table3[,2] == city, -as.numeric(table3[,6]),0)))
+}
+#setting city requirements
+mcf_rhs <- c(500000,500000,-req[5],-req[2],-req[6],-req[4],-req[3],-req[1],-req[7],-req[8],-req[9])
+mcf_sign <- rep("=", 11)
+
+#looping through city constraints
+for(i in 1:nrow(capacity_vectors)) {
+  add.constraint(mcf, capacity_vectors[i,], mcf_sign[i], mcf_rhs[i])
+}
+
+#Additional capacity constraints specified in problem but not in table
+#identifying index for 1's to be placed in capacity vector
+Niger_trucks <- which(table3[,2]==cities[9] & table3[,3]==table1[3,1])
+Chad_trucks <- which(table3[,2]==cities[11] & table3[,3]==table1[3,1])
+Chad_planes <- which((table3[,2]==cities[11] & table3[,3]==table1[1,1]) & (table3[,1]==cities[3] | table3[,1]==cities[6]))
+
+extra_restrictions <- c(Niger_trucks,Chad_trucks,Chad_planes)
+extra_rhs <- c(0,0,0,840,840,840,200,200)
+extra_sign <- c(rep("=",3),rep("<=",5))
+
+#will replace each empty capacity vector with index for one of the 8 restrictions
+empty_capacity <- rep(0,30)
+
+for(i in 1:length(extra_restrictions)) {
+  add.constraint(mcf, replace(empty_capacity,extra_restrictions[i],1), extra_sign[i], extra_rhs[i])
+}
+
+# Add names
+dimnames(mcf) <- list(c(cities,"Truck constraint 1","Truck constraint 2","Truck constraint 3","Truck constraint 4", "Truck constraint 5","Truck constraint 6","Plane constraint 1","Plane constraint 2"), route_names)
+
+#make sure problem is coded correctly
+#write.lp(mcf, "Problem3.lp",type = 'lp')
+
+# Solve the model
+solve(mcf)
+
+# Get objective value
+ps <- get.primal.solution(mcf)
+ov <- paste0("Objective Value = ", round(ps[1],2))
+ov
+
+mcf_solution <- create_sa_tab(mcf)
+
+# Creating route table and formatting it for output
+mcf_routes_used <- mcf_solution[1,20:49]
+mcf_routes_used <- cbind(mcf_routes_used,table3[,3],table3[,5],(as.numeric(mcf_routes_used) * as.numeric(table3[,5])))
+mcf_routes_used <- as.table(mcf_routes_used)
+mcf_routes_used <- mcf_routes_used[mcf_routes_used[,4]>0,]
+colnames(mcf_routes_used) <- c("Transport Units Used", "Transport Type", "Cost per Unit", "Total Cost")
+mcf_routes_used 
+```
+
+```{r, echo=FALSE}
+# Network table with costs
+kable(mcf_routes_used)
+```
+
+
+The total cost to supply the nine cities with their required aid will be 310,861,300 dollars. Some cities receive aid from multiple sources, others receive all of their required aid from one city. There is a vast difference in the amount of money it will take to supply each of these nine cities, even when accounting for the different amounts that they require. We can see that meeting the requirements for Lusaka will cost over 50 million dollars (almost 1/6th of the total), while supplying Ndjamena will cost just under 1.5 million dollars. 
+
+The table shows that shipping is generally cheaper than planes for the first leg of the journey, while planes are cost effective for making the short journey between some of the African cities (like those to Ndjamena). Similarly, it is clear that transporting cargo by plane is much more logistically feasible for delivering supplies to the three most remote African cities (it requires over 10,000 trucks to meet requirements for Kosongo but only around 600 airplanes for the other two cities). 
+
+Again, we see that Khartoum is the best refueling option for two of these three cities and will likely have congested airfields due to the thousands of planes entering and exiting the city. The additional restrictions in place that limit the amount of transport units that can enter each country make it more difficult to find alternate paths to route the aid, but proactive planning and constant communication between countries should help to eliminate some of the bottlenecks that may arise. 
+
+
+**Case 3 - Maximize total cargo**
+
+
+The final scenario accounts for the fact that some countries are likely to place additional restrictions on transportation capacity in the event that huge quantities of aid are required. This will limit the amount of cargo that can travel on certain routes and will decrease the total amount of aid that can reach the nine cities. This model factors in these constraints and delivers a solution that sends a combined total of 761,170 tons of cargo. A table showing how much cargo each city will receive is shown below.
+
+
+```{r, include=FALSE}
+
+#create a total capacity column for max flow problem
+air_capacity <- as.numeric(table5[,3])
+truck_capacity <- as.numeric(table6[,3])
+unlimited <- 100000
+
+#not very automated but unless we have an idea of how the data will change, I don't see how this can be more reproducible
+route_capacity <- as.numeric(c(air_capacity[1],unlimited,air_capacity[2:3],unlimited,unlimited,
+                         air_capacity[4],unlimited,air_capacity[5:6],unlimited,unlimited,
+                         air_capacity[7],0,air_capacity[8:9],0,0,
+                         air_capacity[10],truck_capacity[3],air_capacity[11:12],truck_capacity[1],truck_capacity[5],
+                         air_capacity[13],truck_capacity[4],air_capacity[14:15],truck_capacity[2],truck_capacity[6]))
+
+# Set up model
+maxflow <- make.lp(0, 30)
+invisible(capture.output(lp.control(maxflow, sense = "max")))
+
+# Set objective fn
+transport_capacity <- table3[,6]
+
+#want to count all cargo that leaves USA and enters Africa
+obj_fn <- c(as.numeric(transport_capacity[1:12]), rep(0,18))
+set.objfn(maxflow, obj_fn)
+
+# City Constraints, cities should not end up with more than their required amount
+maxflow_rhs <- c(500000,500000,-req[5],-req[2],-req[6],-req[4],-req[3],-req[1],-req[7],-req[8],-req[9])
+maxflow_sign <- c("<=","<=",rep(">=", 9))
+
+#looping through cities
+for(i in 1:nrow(capacity_vectors)) {
+  add.constraint(maxflow, capacity_vectors[i,], maxflow_sign[i], maxflow_rhs[i])
+}
+
+#Capacity Constraints (one for each route)
+constraint_matrix <- diag(30)
+for(i in 1:30){
+  add.constraint(maxflow, constraint_matrix[i,], "<=",  route_capacity[i])
+}
+
+# Add names
+dimnames(maxflow) <- list(c(cities,route_names), route_names)
+
+#make sure problem is coded correctly
+#write.lp(maxflow, "Problem4.lp",type = 'lp')
+
+# Solve the model
+solve(maxflow)
+
+# Get objective value
+ps <- get.primal.solution(maxflow)
+ov <- paste0("Objective Value = ", round(ps[1],2))
+ov
+
+maxflow_solution <- create_sa_tab(maxflow)
+maxflow_solution
+
+# creating final tables
+maxflow_routes_used <- maxflow_solution[1,42:71]
+maxflow_routes_used <- cbind(maxflow_routes_used,table3[,3],table3[,6],(as.numeric(maxflow_routes_used) * as.numeric(table3[,6])))
+maxflow_routes_used <- as.table(maxflow_routes_used)
+maxflow_routes_used <- maxflow_routes_used[maxflow_routes_used[,4]>0,]
+colnames(maxflow_routes_used) <- c("Transport Units Used", "Transport Type", "Cargo Capacity per Unit", "Total Cargo")
+
+africa_maxflow <- c(maxflow_solution[1,3:11])
+africa_maxflow <- as.numeric(africa_maxflow)*-1
+africa_maxflow <- format(africa_maxflow, scientific = FALSE)
+africa_max_table <- cbind(cities[3:11],africa_maxflow)
+colnames(africa_max_table) <- c("City", "Total Cargo")
+
+```
+
+```{r, echo=FALSE}
+# Network table with costs
+kable(africa_max_table)
+```
+
+
+There is no accounting for the cost of transportation, so this scenario is also likely to be used when there is a dire emergency that necessitates a robust response. A full breakdown of the cargo delivered on each route is below.
+
+
+```{r, echo=FALSE}
+# Network table with costs
+kable(maxflow_routes_used)
+```
+
+
+The total cargo column adds up to greater than 761,170 because some of the cargo must be redirected to the three strategic cities. Again, all three methods of transport are used and 19 of the 30 possible routes have at least some transportation responsibilities. This will make route coordination more difficult, especially for the cities with multiple routes in and out of their supply centers. This includes two of the remote cities (Kosongo and Ndjamena), each of which will be receiving supplies from 5 different cities. Ideally, aid would be more centrally distributed from only one or two sources but due to the intense transportation restrictions that certain countries are likely to impose, it would be impossible to maximize total cargo unless it follows this distributed model. 
+
+Once more, we find that Khartoum will be a major hub in the event that this plan needs to be implemented. It will be receiving hundreds of planes from both New York and Jacksonville, and will then have to turn around and send dozens of planes out to Niamey, Kosongo, and Ndjamena. Similar burdens will be placed on other African cities, particularly those with airfields. Adding more cities with airfields (or constructing an airfield in the port cities of Dakar, Libreville, and Luanda) would decrease the pressure on the three busy airfields and allow more total cargo to make the journey.
+
+This planning exercise has shown that it will require enormous amounts of coordination between cities and governments to make these deliveries smoothly. Each scenario will involve dozens of moving parts that will have to be executed flawlessly in order to preserve human life. Having an idea of the general costs and most heavily used routes will allow the IFRC to plan accordingly to reduce or eliminate some of the barriers that could inhibit the delivery of aid in the event of an emergency situation.

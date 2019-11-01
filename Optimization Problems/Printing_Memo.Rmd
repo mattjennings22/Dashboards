@@ -1,0 +1,342 @@
+---
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### **To:** Seymore Butts, Print Shop Manager
+  
+#### **From:** Matt Jennings, Data Analyst 
+  
+#### **Date:** `r format(Sys.time(), '%B %d, %Y')`   
+  
+#### **RE:** Proposals to reduce the cost of printing
+
+***
+
+**Overview**
+
+```{r, include=FALSE}
+# Set up
+
+# Clear environment
+rm(list = ls(all = TRUE)) 
+# Load packages
+library(queueing)
+library(knitr)
+
+```
+
+
+Artie Fophartie, a local artist and curator of the new exhibit at the Seattle Museum of Modern Art, recently approached our print shop to help him reproduce some of the works displayed at his exhibit. After gladly accepting his business, we have determined that our current production system will not be able to accommodate the demands of our newest customer. The exhibit was a huge success and we cannot cycle through our orders fast enough using our existing process. This analysis seeks to identify a few alternatives that could potentially reduce the cost of creating these prints and allow for fewer bottlenecks in the production system. The main issue is a backlog of in-process inventory which significantly slows down the entire process. We have identified two possible alternatives for reducing this inventory, and thus the costs associated with printing.
+
+
+**Status Quo**
+
+
+First, we evaluated the status quo to determine a baseline level of cost associated with producing the artwork. All costs referenced are in dollars per hour. There are four main components of the cost calculation: the cost of storing in-process inventory for the presses, the cost of in-process inventory for the inspection, the cost of running the presses, and the hourly wage of the inspector. In order to calculate the expected hourly rate, we have created a queueing simulation which can approximate the amount of inventory we can expect to have. The basics are that we have 10 presses and one print inspector (whose hourly salary is 17 dollars an hour). 
+
+
+```{r, include=FALSE}
+# Status quo
+
+######## Set parameters for printing
+lam <- 7 #arrivals per hour
+mu <- 1 #how many can be printed in an hour
+s <- 10 #number of presses
+rho <- lam/(s*mu)
+
+# Let's look for up to 10 arrivals
+n <- 10
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_1 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table using a function
+performance_table <- function(lam,mu,s) {
+  # Set a loop to make steady state calculations
+  # Loop to build table of results
+  for (i in 0:n){
+    
+    # Using "queueing" package
+    q_mod <- NewInput.MMC(lam, mu, s, i)
+    m <- QueueingModel.i_MMC(q_mod)
+    
+    # Probability of n people in queue system
+    pn <- m$Pn[i+1] 
+    
+    # Cummalative probability
+    cn <- pn + cn
+    
+    # Mean number of customers in queue system
+    L <- m$L  
+    
+    # Mean minutes wait time in queue system
+    W <- m$W*60 
+    
+    #Mean minutes wait time in queue waiting for service
+    Wq <- m$Wq*60 
+    
+    # Mean number of customers in queue
+    Lq <- m$Lq 
+    
+    # Organize in table
+    tab_1[i+1,] <- round(c(pn, cn, L, Lq, W, Wq), 3) 
+  }
+    
+    return(tab_1)
+}
+
+tab_1 <- performance_table(lam,mu,s)
+
+rownames(tab_1) <- c(0:n)
+colnames(tab_1) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_1
+
+######## set parameters for inspecting
+lam <- 7 #arrivals per hour
+mu <- 8 #how many can be inspected in an hour
+s <- 1 #number of inspectors
+rho <- lam/(s*mu)
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_2 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table
+
+tab_2 <- performance_table(lam,mu,s)
+
+rownames(tab_2) <- c(0:n)
+colnames(tab_2) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_2
+
+#sum of costs (in-process inventory at press and inspection, running the presses, cost of the inspector)
+s <- 10 # reset to presses
+inventory <- 8
+power <- 7
+inspector <- 17
+status_quo_costs <- inventory*tab_1$L[1] + inventory*tab_2$L[1] + power*s + inspector
+
+#creating cost breakdown table for display
+status_quo_tab <- round(as.data.frame(t(c(tab_1$L[1],tab_2$L[1],inventory,s,power,inspector, status_quo_costs))),2)
+colnames(status_quo_tab) <- c("In-process Inventory at Press","In-process Inventory at Inspection","Inventory Cost","Number of Presses", "Cost per Press", "Cost of Inspector", "Total Cost")
+```
+
+```{r, echo=FALSE}
+kable(status_quo_tab)
+```
+
+
+After estimating the number of prints coming in (7 per hour) and the rate at which they can be processed (1 per hour), we find that the expected amount of in-process inventory to be 7.52 prints. Similarly, the expected inventory at the inspection station was found to be 7 prints. We have determined that it costs 8 dollars per hour to store the prints in either situation, so the total cost of in-process inventory is estimated to be 116.14 dollars. The remaining costs are for electricity (7 dollars per hour x 10 presses) and inspector salary, so the grand total is 203.14 dollars per hour to conduct operations. This will be used as the baseline cost for comparison in the next two proposals.
+
+
+**Proposal 4 - Increased Production Time**
+
+
+The first proposal to reduce inventory and costs is to slow the production time of prints from 1 hour to 1.2 hours. In theory, this should ease the burden on the print inspector and cut the cost of electricity from 7 dollars per hour to 6.50 per hour. These changes were added to our queueing model to determine whether or not inventory or costs are reduced.
+
+
+```{r, include=FALSE}
+# Proposal 4
+
+####### Set parameters for printing
+lam <- 7 #arrivals per hour
+mu <- 1/1.2 #how many can be printed in an hour
+s <- 10 #number of presses
+rho <- lam/(s*mu)
+
+# Let's look for up to 10 arrivals
+n <- 10
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_3 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table
+tab_3 <- performance_table(lam,mu,s)
+
+rownames(tab_3) <- c(0:n)
+colnames(tab_3) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_3
+
+####### set parameters for inspecting
+lam <- 7 #arrivals per hour
+mu <- 8 #how many can be inspected in an hour
+s <- 1 #number of inspectors
+rho <- lam/(s*mu)
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_4 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table
+tab_4 <- performance_table(lam,mu,s)
+
+rownames(tab_4) <- c(0:n)
+colnames(tab_4) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_4
+
+#sum of costs (in-process inventory at press and inspection, running the presses, cost of the inspector)
+s <- 10 # reset to presses
+inventory <- 8
+power <- 6.5
+inspector <- 17
+prop4_costs <- inventory*tab_3$L[1] + inventory*tab_4$L[1] + power*s + inspector
+
+#creating cost breakdown table for display
+prop4_tab <- round(as.data.frame(t(c(tab_3$L[1],tab_4$L[1],inventory,s,power,inspector, prop4_costs))),2)
+colnames(prop4_tab) <- c("In-process Inventory at Press","In-process Inventory at Inspection","Inventory Cost","Number of Presses", "Cost per Press", "Cost of Inspector", "Total Cost")
+```
+
+```{r, echo=FALSE}
+kable(prop4_tab)
+```
+
+The final model indicates that with these changes, the hourly cost for production will jump to 226.38 dollars. The average in-process inventory has increased from 7.52 to 11.05 for the printing station (to be expected since prints take longer), so the cost of storing them has gone up. The cost of the in-process inventory at the inspection station and the inspector's hourly wage have not changed, so the only price decrease comes from the 50 cents saved per hour for each press. This is clearly outweighed by the additional cost of storing inventory at the presses.
+
+
+**Proposal 5 - Hire More Experienced Inspector**
+
+
+The next proposal involves hiring a more experienced inspector that can work faster and reduce the amount of in-process inventory stuck at the inspection station. The tradeoff here is that a more experienced inspector will demand a higher wage and should cost about 19 dollars per hour. Inventory at the press does not change and the cost of powering the presses returns to 7 dollars per hour.
+
+
+```{r, include=FALSE}
+# Proposal 5
+
+####### Set parameters for printing
+lam <- 7 #arrivals per hour
+mu <- 1 #how many can be printed in an hour
+s <- 10 #number of presses
+rho <- lam/(s*mu)
+
+# Let's look for up to 10 arrivals
+n <- 10
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_5 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table
+tab_5 <- performance_table(lam,mu,s)
+
+rownames(tab_5) <- c(0:n)
+colnames(tab_5) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_5
+
+####### set parameters for inspecting
+lam <- 7 #arrivals per hour
+mu <- 60/7 #how many can be inspected in an hour
+s <- 1 #number of inspectors
+rho <- lam/(s*mu)
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_6 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table
+tab_6 <- performance_table(lam,mu,s)
+
+rownames(tab_6) <- c(0:n)
+colnames(tab_6) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_6
+
+#sum of costs (in-process inventory at press and inspection, running the presses, cost of the inspector)
+s <- 10 # reset to presses
+inventory <- 8
+power <- 7
+inspector <- 19
+prop5_costs <- inventory*tab_5$L[1] + inventory*tab_6$L[1] + power*s + inspector
+
+#creating cost breakdown table for display
+prop5_tab <- round(as.data.frame(t(c(tab_5$L[1],tab_6$L[1],inventory,s,power,inspector, prop5_costs))),2)
+colnames(prop5_tab) <- c("In-process Inventory at Press","In-process Inventory at Inspection","Inventory Cost","Number of Presses", "Cost per Press", "Cost of Inspector", "Total Cost")
+```
+
+```{r, echo=FALSE}
+kable(prop5_tab)
+```
+
+
+The new inspector significantly reduces the average number of prints in the inspection process, down from 7 to 4.46. The drop in expected in-process inventory of 2.54 on average means that the cost of storing those items decreases by 2.54 x 8 dollars per hour, for a savings of 20.32 dollars per hour. This is significanly greater than the extra 2 dollars per hour it would cost to hire a more experienced inspector.
+
+
+**Final Recommendation**
+
+
+Based on the results from the analysis of all three scenarios, we would recommend that you implement proposal 5 as soon as possible. This would reduce costs by over 18 dollars per hour as compared to current operating costs. Our analysis shows that the easiest way to reduce cost is to reduce the amount of in-process inventory stored at the presses and inspection station. The best way to do this is to increase the rate at which the prints can be created or inspected, thus reducing the amount of prints in either system at any given time. This goal is achieved in proposal 5 (due to a more experienced inspector) but not proposal 4, so it is no surprise to see that proposal 5 is the most cost effective solution of the three scenarios.
+
+
+```{r, include=FALSE}
+
+# Hypothetical proposal of speeding up presses
+
+####### Set parameters for printing
+lam <- 7 #arrivals per hour
+mu <- 1/0.8 #how many can be printed in an hour
+s <- 10 #number of presses
+rho <- lam/(s*mu)
+
+# Let's look for up to 10 arrivals
+n <- 10
+
+# Set initial cummulative probability 
+cn <- 0
+
+# Build a table of results
+tab_3 <- as.data.frame(matrix(0, n+1, 6))
+
+# Make performance parameter table
+tab_7 <- performance_table(lam,mu,s)
+
+rownames(tab_7) <- c(0:n)
+colnames(tab_7) <- c("pn", "cn", "L", "Lq", "W", "Wq")
+
+tab_7
+
+#sum of costs (in-process inventory at press and inspection, running the presses, cost of the inspector)
+s <- 10 # reset to presses
+inventory <- 8
+power <- 7.5
+inspector <- 17
+hyp_costs <- inventory*tab_7$L[1] + inventory*tab_2$L[1] + power*s + inspector
+
+#final cost comparison
+cost_tab <- round(cbind(status_quo_costs, prop4_costs, prop5_costs),2)
+colnames(cost_tab) <- c("Status Quo Hourly Costs", "Proposal 4 Hourly Costs", "Proposal 5 Hourly Costs")
+
+```
+
+```{r, echo=FALSE}
+kable(cost_tab)
+
+```
+
+
+Another way to reduce inventory could be to focus on increasing the rate of printing. If we were interested in speeding up the printing process, it would require more energy (about 7.50 per press per hour) but would also reduce the inventory at the press. Our calculations indicate that this route would also be less expensive (193.50 dollars per hour) than the status quo because the reduced inventory costs are greater than the extra cost of power. 
+
+Overall, this analysis shows that most of our energy should be focused on finding ways to make the printing and inspection systems more efficient, which would serve to cut down in-process inventory and reduce the bottlenecks that occur there.
+
